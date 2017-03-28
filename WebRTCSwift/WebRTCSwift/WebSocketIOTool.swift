@@ -13,6 +13,15 @@ public let RECEIVED_SINALING_MESSAGE_NOTI = "RECEIVED_SINALING_MESSAGE_NOTI"
 
 let WEBSOCKET_URL_STRING = "http://47.90.55.2:3000"
 
+public enum WebSocketSDPType: String {
+    
+    case hello = "init"
+    case offer = "offer"
+    case answer = "answer"
+    case candidate = "candidate"
+    case bye = "bye"
+}
+
 class WebSocketIOTool: NSObject {
 
     static let shared = WebSocketIOTool()
@@ -66,7 +75,7 @@ class WebSocketIOTool: NSObject {
         
         self.remoteSigid = from
         
-        if type == "init" {
+        if type == WebSocketSDPType.hello.rawValue {
         
             // create media stream
             WebRTCTool.shared.createMediaStream()
@@ -79,7 +88,7 @@ class WebSocketIOTool: NSObject {
                 self.emitMessage(dict: json)
             })
             
-        }else if type == "offer" {
+        }else if type == WebSocketSDPType.offer.rawValue {
         
             // create media stream
             WebRTCTool.shared.createMediaStream()
@@ -87,26 +96,29 @@ class WebSocketIOTool: NSObject {
             guard let sdp = model.payload?["sdp"] as? String else { return  }
             
             // set remote description
-            WebRTCTool.shared.setRemoteDescription(type: type, sdp: sdp, completionHandler: { (sdp) in
+            WebRTCTool.shared.setRemoteDescription(type: .offer, sdp: sdp, completionHandler: { (sdp) in
                 
                 let json : [String: Any] = ["to": from, "type": "answer", "payload": ["type": "answer", "sdp": sdp]]
                 // 发送answer
                 self.emitMessage(dict: json)
             })
             
-        }else if type == "answer" {
+        }else if type == WebSocketSDPType.answer.rawValue {
          
             guard let sdp = model.payload?["sdp"] as? String else { return  }
             // set remote description
-            WebRTCTool.shared.setRemoteDescription(type: type, sdp: sdp, completionHandler: nil)
+            WebRTCTool.shared.setRemoteDescription(type: .answer, sdp: sdp, completionHandler: nil)
             
-        }else if type == "candidate" {
+        }else if type == WebSocketSDPType.candidate.rawValue {
         
             guard let payload = model.payload else {return}
             
             guard let candidate = payload["candidate"] as? String, let sdpMid = payload["id"] as? String, let sdpLineIndewx = payload["label"] as? Int else {return}
             
             WebRTCTool.shared.addICECandidata(sdp: candidate, sdpMLineIndex: Int32(sdpLineIndewx), sdpMid: sdpMid)
+        
+        }else if type == WebSocketSDPType.bye.rawValue {
+        
         }
     }
     

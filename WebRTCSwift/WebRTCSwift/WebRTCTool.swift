@@ -11,6 +11,13 @@ import WebRTC
 
 private let STUN_SERVER_URL = "stun:112.74.103.182:3478"
 //private let STUN_SERVER_URL_2 = "stun:stun.l.google.com:19302"
+private let WEBRTC_VIDEO_CODEC = "H264"
+
+private enum WebRTCStreamTrackID : String {
+    case mediaStream = "ARDAMS"
+    case videoTrack = "ARDAMSv0"
+    case audioTrack = "ARDAMSa0"
+}
 
 protocol WebRTCToolDelegate : NSObjectProtocol {
     
@@ -32,10 +39,12 @@ class WebRTCTool: NSObject {
     
     
     // MARK: -私有属性
-    fileprivate lazy var peerConnectionFactory : RTCPeerConnectionFactory = RTCPeerConnectionFactory()
-    
     fileprivate var mediaStream : RTCMediaStream!
     
+    /// p2p连接工具
+    fileprivate lazy var peerConnectionFactory : RTCPeerConnectionFactory = RTCPeerConnectionFactory()
+    
+    /// p2p连接
     fileprivate lazy var peerConnection : RTCPeerConnection = {
     
         let iceServer = RTCIceServer(urlStrings: [STUN_SERVER_URL])
@@ -47,7 +56,7 @@ class WebRTCTool: NSObject {
         return self.peerConnectionFactory.peerConnection(with: config, constraints: self.peerConnectionConstraints, delegate: self)
     
     }()
-
+    
     fileprivate var peerConnectionConstraints : RTCMediaConstraints {
     
         return RTCMediaConstraints(mandatoryConstraints: ["OfferToReceiveAudio" : "true","OfferToReceiveVideo" : "true"], optionalConstraints: ["DtlsSrtpKeyAgreement" : "true"])
@@ -74,13 +83,13 @@ class WebRTCTool: NSObject {
     public func createMediaStream() {
         
         // local media stream
-        self.mediaStream = self.peerConnectionFactory.mediaStream(withStreamId: "ARDAMS")
+        self.mediaStream = self.peerConnectionFactory.mediaStream(withStreamId: WebRTCStreamTrackID.mediaStream.rawValue)
         
 
+        // camera 权限
         guard (AVCaptureDevice.devices(withMediaType: AVMediaTypeVideo).last as? AVCaptureDevice) != nil else {
             
             print("相机不能打开摄像头")
-            
             return
         }
         
@@ -89,17 +98,16 @@ class WebRTCTool: NSObject {
         if authStatus == .restricted || authStatus == .denied {
             
             print("相机访问受限")
-
             return
         }
         // add video track
         let videoSource = self.peerConnectionFactory.avFoundationVideoSource(with: self.localVideoConstraints)
         
-        let videoTrack = self.peerConnectionFactory.videoTrack(with: videoSource, trackId: "ARDAMSv0")
+        let videoTrack = self.peerConnectionFactory.videoTrack(with: videoSource, trackId: WebRTCStreamTrackID.videoTrack.rawValue)
         self.mediaStream.addVideoTrack(videoTrack)
         
         // add audio track
-        let audioTrack = self.peerConnectionFactory.audioTrack(withTrackId: "ARDAMSa0")
+        let audioTrack = self.peerConnectionFactory.audioTrack(withTrackId: WebRTCStreamTrackID.audioTrack.rawValue)
         self.mediaStream.addAudioTrack(audioTrack)
         
         // add to peerconnection
@@ -108,9 +116,8 @@ class WebRTCTool: NSObject {
         if let delegate = self.delegate {
             delegate.webRTCTool(webRTCTool: self, setLocalStream: self.mediaStream)
         }
-        
     }
-    // 创建offer
+    /// 创建offer
     public func createOffer(completionHandler: ((_ sdp: String)->())?) {
     
         self.peerConnection.offer(for: self.offerOrAnswerConstraints) {[weak self] (sessionDescription, error) in
@@ -121,28 +128,25 @@ class WebRTCTool: NSObject {
                 return
             }
             self?.p_setLocalDescription(sessionDescription: sessionDescription, completionHandler: completionHandler)
-            
         }
     }
     
     /// 设置远程description
-    public func setRemoteDescription(type: String, sdp: String, completionHandler: ((_ sdp: String)->())?) {
+    public func setRemoteDescription(type: RTCSdpType, sdp: String, completionHandler: ((_ sdp: String)->())?) {
         
-        let sdpType : RTCSdpType = type == "offer" ? .offer : .answer
+        let remoteSdp = RTCSessionDescription(type: type, sdp: sdp)
         
-        let remoteSdp = RTCSessionDescription(type: sdpType, sdp: sdp)
-        
-        let newSdp = self.p_sessionDescripteion(description: remoteSdp, preferredVideoCodec: "H264")
+        let newSdp = self.p_sessionDescripteion(description: remoteSdp, preferredVideoCodec: WEBRTC_VIDEO_CODEC)
         
         self.peerConnection.setRemoteDescription(newSdp) {[weak self] (error) in
             
             if let error = error {
             
                 print(error)
-               return
+                return
             }
             
-            if sdpType != .offer {
+            if type != .offer {
                 return
             }
             
@@ -168,7 +172,7 @@ extension WebRTCTool {
             return
         }
         
-        let newSdp = self.p_sessionDescripteion(description: sdp, preferredVideoCodec: "H264")
+        let newSdp = self.p_sessionDescripteion(description: sdp, preferredVideoCodec: WEBRTC_VIDEO_CODEC)
         
         self.peerConnection.setLocalDescription(newSdp) {[weak self] (error) in
             
@@ -181,7 +185,7 @@ extension WebRTCTool {
         }
         
     }
-    
+    /// RTCSessionDescription 转换
     fileprivate func p_sessionDescripteion(description: RTCSessionDescription, preferredVideoCodec codec: String) -> RTCSessionDescription{
     
         let sdpString = description.sdp
@@ -262,13 +266,13 @@ extension WebRTCTool : RTCPeerConnectionDelegate {
     
     /** Called when the SignalingState changed. */
     public func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState){
-        print("didChange= stateChanged===================\(stateChanged.rawValue)")
+        print("==didChange RTCSignalingState==\(stateChanged.rawValue)")
     }
     
     
     /** Called when media is received on a new stream from remote peer. */
     public func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream){
-        
+        print("==didAdd stream==")
         if let delegate = self.delegate {
         
             delegate.webRTCTool(webRTCTool: self, addRemoteStream: stream)
@@ -278,40 +282,44 @@ extension WebRTCTool : RTCPeerConnectionDelegate {
     
     /** Called when a remote peer closes a stream. */
     public func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream){
-        print("didRemove stream====================")
+        print("==didRemove stream==")
     }
     
     
     /** Called when negotiation is needed, for example ICE has restarted. */
     public func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection){
-        print("peerConnectionShouldNegotiate====================")
+        print("==peerConnectionShouldNegotiate==")
     }
     
     
     /** Called any time the IceConnectionState changes. */
     public func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState){
-        print("didChange1 newState====================\(newState.rawValue)")
-        
+
         switch newState {
         case .connected:
-            print("==========connected==========")
+            print("==connected==")
         case .disconnected:
-            print("==========disconnected==========")
+            print("==disconnected==")
+        case .closed:
+            print("==closed==")
+        case .failed:
+            print("==failed==")
         default:
             break
         }
-        
     }
     
     
     /** Called any time the IceGatheringState changes. */
     public func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState){
-        print("didChange2====================\(newState.rawValue)")
+        print("==didChange RTCIceGatheringState==\(newState.rawValue)")
     }
     
     
     /** New ice candidate has been found. */
     public func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate){
+        
+        print("==didGenerate RTCIceCandidate==")
         
         if let delegate = self.delegate {
             
@@ -322,13 +330,13 @@ extension WebRTCTool : RTCPeerConnectionDelegate {
     
     /** Called when a group of local Ice candidates have been removed. */
     public func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]){
-        print("didRemove candidates====================")
+        print("==didRemove candidates==")
     }
     
     
     /** New data channel has been opened. */
     public func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel){
-        print("didOpen====================")
+        print("==didOpen dataChannel==")
     }
 
 }
