@@ -9,7 +9,9 @@
 import UIKit
 import WebRTC
 import SocketIO
-public let RECEIVED_SINALING_MESSAGE_NOTI = "RECEIVED_SINALING_MESSAGE_NOTI"
+
+public let WEB_RECEIVED_SINALING_MESSAGE_NOTI = "WEB_RECEIVED_SINALING_MESSAGE_NOTI"
+public let WEB_RECEIVED_SIGID_NOTI = "WEB_RECEIVED_SIGID_NOTI"
 
 let WEBSOCKET_URL_STRING = "http://47.90.55.2:3000"
 
@@ -26,12 +28,15 @@ class WebSocketIOTool: NSObject {
 
     static let shared = WebSocketIOTool()
     
+    // 本地sigid
     var localSigid : String?
     
+    // 远程sigid
     var remoteSigid : String?
     
     private lazy var socket = SocketIOClient(socketURL: NSURL(string: WEBSOCKET_URL_STRING)!, config: ["log": false, "forcePolling": true])
     
+    // 开始监听数据
     public func startLintening() {
         
         self.socket.on("connect") { (_, _) in
@@ -49,6 +54,8 @@ class WebSocketIOTool: NSObject {
             
             self.localSigid = result
             
+            NotificationCenter.default.post(name: NSNotification.Name(WEB_RECEIVED_SIGID_NOTI), object: result)
+            
         }
         self.socket.on("id2") { (datas, _) in
             
@@ -58,68 +65,15 @@ class WebSocketIOTool: NSObject {
                 return
             }
             
-            self.p_handleMessage(result: datas[0])
+            print("receive data ==>\(datas[0])")
+            
+            guard let dict = datas[0] as? [String: Any] else { return }
+            
+            let model = SocketIOModel(jsonDict: dict)
+            
+            NotificationCenter.default.post(name: NSNotification.Name(WEB_RECEIVED_SINALING_MESSAGE_NOTI), object: model)
         }
         self.socket.connect()
-    }
-    
-    private func p_handleMessage(result: Any) {
-        
-        print("receive data ==>\(result)")
-        
-        guard let dict = result as? [String: Any] else { return }
-        
-        let model = SocketIOModel(jsonDict: dict)
-        
-        guard let type = model.type, let from = model.from else { return }
-        
-        self.remoteSigid = from
-        
-        if type == WebSocketSDPType.hello.rawValue {
-        
-            // create media stream
-            WebRTCTool.shared.createMediaStream()
-            
-            // 创建offer
-            WebRTCTool.shared.createOffer(completionHandler: { (sdp) in
-                
-                let json : [String: Any] = ["to": from, "type": "offer", "payload": ["type": "offer", "sdp": sdp]]
-                // 发送offer
-                self.emitMessage(dict: json)
-            })
-            
-        }else if type == WebSocketSDPType.offer.rawValue {
-        
-            // create media stream
-            WebRTCTool.shared.createMediaStream()
-            
-            guard let sdp = model.payload?["sdp"] as? String else { return  }
-            
-            // set remote description
-            WebRTCTool.shared.setRemoteDescription(type: .offer, sdp: sdp, completionHandler: { (sdp) in
-                
-                let json : [String: Any] = ["to": from, "type": "answer", "payload": ["type": "answer", "sdp": sdp]]
-                // 发送answer
-                self.emitMessage(dict: json)
-            })
-            
-        }else if type == WebSocketSDPType.answer.rawValue {
-         
-            guard let sdp = model.payload?["sdp"] as? String else { return  }
-            // set remote description
-            WebRTCTool.shared.setRemoteDescription(type: .answer, sdp: sdp, completionHandler: nil)
-            
-        }else if type == WebSocketSDPType.candidate.rawValue {
-        
-            guard let payload = model.payload else {return}
-            
-            guard let candidate = payload["candidate"] as? String, let sdpMid = payload["id"] as? String, let sdpLineIndewx = payload["label"] as? Int else {return}
-            
-            WebRTCTool.shared.addICECandidata(sdp: candidate, sdpMLineIndex: Int32(sdpLineIndewx), sdpMid: sdpMid)
-        
-        }else if type == WebSocketSDPType.bye.rawValue {
-        
-        }
     }
     
     func emitMessage(dict: [String: Any]) {

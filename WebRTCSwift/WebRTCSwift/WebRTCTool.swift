@@ -22,10 +22,6 @@ private enum WebRTCStreamTrackID : String {
 protocol WebRTCToolDelegate : NSObjectProtocol {
     
     func webRTCTool(webRTCTool: WebRTCTool, didGenerateIceCandidate candidate: RTCIceCandidate)
-    
-    func webRTCTool(webRTCTool: WebRTCTool, setLocalStream stream: RTCMediaStream)
-    
-    func webRTCTool(webRTCTool: WebRTCTool, addRemoteStream stream: RTCMediaStream)
 }
 
 
@@ -37,24 +33,33 @@ class WebRTCTool: NSObject {
     /// delegate
     public var delegate : WebRTCToolDelegate?
     
+    // 本地
+    var localVideoView : RTCEAGLVideoView?
+    var localVideoTrack : RTCVideoTrack?
+    
+    // 远程
+    var remoteVideoView : RTCEAGLVideoView?
+    var remoteVideoTrack : RTCVideoTrack?
     
     // MARK: -私有属性
     fileprivate var mediaStream : RTCMediaStream!
     
     /// p2p连接工具
-    fileprivate lazy var peerConnectionFactory : RTCPeerConnectionFactory = RTCPeerConnectionFactory()
+    fileprivate var peerConnectionFactory : RTCPeerConnectionFactory!
     
     /// p2p连接
-    fileprivate lazy var peerConnection : RTCPeerConnection = {
+    fileprivate var peerConnection : RTCPeerConnection?
     
+    // peerConnection参数
+    fileprivate lazy var configuration : RTCConfiguration = {
+        
         let iceServer = RTCIceServer(urlStrings: [STUN_SERVER_URL])
         
         let config = RTCConfiguration()
         config.iceServers = [iceServer]
         config.iceTransportPolicy = .all
         
-        return self.peerConnectionFactory.peerConnection(with: config, constraints: self.peerConnectionConstraints, delegate: self)
-    
+        return config
     }()
     
     fileprivate var peerConnectionConstraints : RTCMediaConstraints {
@@ -74,17 +79,51 @@ class WebRTCTool: NSObject {
 
 
     /// 公有方法
-    public func addICECandidata(sdp: String, sdpMLineIndex: Int32, sdpMid: String) {
+    public func startEngine() {
+        
+        RTCInitializeSSL()
+        
+        self.peerConnectionFactory = RTCPeerConnectionFactory()
+    }
     
-        self.peerConnection.add(RTCIceCandidate(sdp: sdp, sdpMLineIndex: sdpMLineIndex, sdpMid: sdpMid))
+    public func stopEngine() {
+        
+        RTCCleanupSSL()
+        
+        self.peerConnectionFactory = nil
+    }
+    
+    // 断开连接后清除
+    public func cleanCache() {
+        
+        UIApplication.shared.isIdleTimerDisabled = false
+        
+        self.peerConnection = nil
+        
+        self.localVideoView?.removeFromSuperview()
+        self.localVideoView = nil
+        self.localVideoTrack = nil
+        
+        self.remoteVideoView?.removeFromSuperview()
+        self.remoteVideoView = nil
+        self.remoteVideoTrack = nil
+    }
+    
+    public func addICECandidata(sdp: String, sdpMLineIndex: Int32, sdpMid: String) {
+        
+        guard let peerConnection = self.peerConnection else { return }
+        
+        peerConnection.add(RTCIceCandidate(sdp: sdp, sdpMLineIndex: sdpMLineIndex, sdpMid: sdpMid))
     }
 
     /// 创建本地流
-    public func createMediaStream() {
+    public func initRTCSetting(remoteViewFrame: CGRect, localViewFrame: CGRect, superView : UIView) {
+        
+        // peer connect
+        let peerConnection = self.peerConnectionFactory.peerConnection(with: self.configuration, constraints: self.peerConnectionConstraints, delegate: self)
         
         // local media stream
         self.mediaStream = self.peerConnectionFactory.mediaStream(withStreamId: WebRTCStreamTrackID.mediaStream.rawValue)
-        
 
         // camera 权限
         guard (AVCaptureDevice.devices(withMediaType: AVMediaTypeVideo).last as? AVCaptureDevice) != nil else {
@@ -103,24 +142,33 @@ class WebRTCTool: NSObject {
         // add video track
         let videoSource = self.peerConnectionFactory.avFoundationVideoSource(with: self.localVideoConstraints)
         
-        let videoTrack = self.peerConnectionFactory.videoTrack(with: videoSource, trackId: WebRTCStreamTrackID.videoTrack.rawValue)
-        self.mediaStream.addVideoTrack(videoTrack)
+        self.localVideoTrack = self.peerConnectionFactory.videoTrack(with: videoSource, trackId: WebRTCStreamTrackID.videoTrack.rawValue)
+        self.mediaStream.addVideoTrack(self.localVideoTrack!)
         
         // add audio track
         let audioTrack = self.peerConnectionFactory.audioTrack(withTrackId: WebRTCStreamTrackID.audioTrack.rawValue)
         self.mediaStream.addAudioTrack(audioTrack)
         
         // add to peerconnection
-        self.peerConnection.add(self.mediaStream)
+        peerConnection.add(self.mediaStream)
         
-        if let delegate = self.delegate {
-            delegate.webRTCTool(webRTCTool: self, setLocalStream: self.mediaStream)
-        }
+        // add remote video view
+        self.remoteVideoView = RTCEAGLVideoView(frame: remoteViewFrame)
+        superView.insertSubview(self.remoteVideoView!, at: 0)
+        self.peerConnection = peerConnection
+        
+        // add local video view
+        self.localVideoView = RTCEAGLVideoView(frame: localViewFrame)
+        superView.insertSubview(self.localVideoView!, at: 1)
+        self.localVideoTrack?.add(self.localVideoView!)
+        
     }
     /// 创建offer
     public func createOffer(completionHandler: ((_ sdp: String)->())?) {
     
-        self.peerConnection.offer(for: self.offerOrAnswerConstraints) {[weak self] (sessionDescription, error) in
+        guard let peerConnection = self.peerConnection else { return }
+        
+        peerConnection.offer(for: self.offerOrAnswerConstraints) {[weak self] (sessionDescription, error) in
             
             if let error = error {
             
@@ -131,14 +179,16 @@ class WebRTCTool: NSObject {
         }
     }
     
-    /// 设置远程description
+    /// 设置远程sdp
     public func setRemoteDescription(type: RTCSdpType, sdp: String, completionHandler: ((_ sdp: String)->())?) {
+        
+        guard let peerConnection = self.peerConnection else { return }
         
         let remoteSdp = RTCSessionDescription(type: type, sdp: sdp)
         
         let newSdp = self.p_sessionDescripteion(description: remoteSdp, preferredVideoCodec: WEBRTC_VIDEO_CODEC)
         
-        self.peerConnection.setRemoteDescription(newSdp) {[weak self] (error) in
+        peerConnection.setRemoteDescription(newSdp) {[weak self] (error) in
             
             if let error = error {
             
@@ -150,7 +200,7 @@ class WebRTCTool: NSObject {
                 return
             }
             
-            self?.peerConnection.answer(for: (self?.offerOrAnswerConstraints)!, completionHandler: {[weak self] (sessionDescription, error) in
+            self?.peerConnection?.answer(for: (self?.offerOrAnswerConstraints)!, completionHandler: {[weak self] (sessionDescription, error) in
                 
                 if let error = error {
                     
@@ -162,30 +212,33 @@ class WebRTCTool: NSObject {
             })
         }
     }
+    
 }
 
 extension WebRTCTool {
 
+    /// 设置本地sdp
     fileprivate func p_setLocalDescription(sessionDescription: RTCSessionDescription?, completionHandler: ((_ sdp: String)->())?) {
     
         guard let sdp = sessionDescription else {
             return
         }
         
+        guard let peerConnection = self.peerConnection else { return }
+        
         let newSdp = self.p_sessionDescripteion(description: sdp, preferredVideoCodec: WEBRTC_VIDEO_CODEC)
         
-        self.peerConnection.setLocalDescription(newSdp) {[weak self] (error) in
+        peerConnection.setLocalDescription(newSdp) {[weak self] (error) in
             
             if let handle = completionHandler {
             
-                if let sdpString = self?.peerConnection.localDescription?.sdp {
+                if let sdpString = self?.peerConnection?.localDescription?.sdp {
                     handle(sdpString)
                 }
             }
         }
-        
     }
-    /// RTCSessionDescription 转换
+    /// sdp 转换
     fileprivate func p_sessionDescripteion(description: RTCSessionDescription, preferredVideoCodec codec: String) -> RTCSessionDescription{
     
         let sdpString = description.sdp
@@ -273,10 +326,15 @@ extension WebRTCTool : RTCPeerConnectionDelegate {
     /** Called when media is received on a new stream from remote peer. */
     public func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream){
         print("==didAdd stream==")
-        if let delegate = self.delegate {
         
-            delegate.webRTCTool(webRTCTool: self, addRemoteStream: stream)
+        self.remoteVideoTrack = nil
+        self.remoteVideoView?.renderFrame(nil)
+        if stream.videoTracks.count == 0 {
+            return;
         }
+        self.remoteVideoTrack = stream.videoTracks[0]
+        
+        self.remoteVideoTrack?.add(self.remoteVideoView!)
     }
     
     
@@ -298,6 +356,7 @@ extension WebRTCTool : RTCPeerConnectionDelegate {
         switch newState {
         case .connected:
             print("==connected==")
+            UIApplication.shared.isIdleTimerDisabled = true
         case .disconnected:
             print("==disconnected==")
         case .closed:

@@ -9,4 +9,5 @@ target 'WebRTCSwift' do
 
 pod 'Socket.IO-Client-Swift'
 pod 'WWZSwiftSocket'
+pod 'WWZSwift'
 end

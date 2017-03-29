@@ -16,20 +16,23 @@ PODS:
     - AFNetworking/NSURLSession
   - CocoaAsyncSocket (7.6.0)
   - Socket.IO-Client-Swift (8.3.0)
+  - WWZSwift (1.3.1)
   - WWZSwiftSocket (0.0.4):
     - AFNetworking
     - CocoaAsyncSocket
 
 DEPENDENCIES:
   - Socket.IO-Client-Swift
+  - WWZSwift
   - WWZSwiftSocket
 
 SPEC CHECKSUMS:
   AFNetworking: 5e0e199f73d8626b11e79750991f5d173d1f8b67
   CocoaAsyncSocket: b9d5589f07baf9de8f34cc25abd4fcba28f13805
   Socket.IO-Client-Swift: 7ad3aded3c0f74d99555e950ac3aa82ca3eefbaf
+  WWZSwift: 497d7211c4be616ab409db49b6c0fba4af30e88d
   WWZSwiftSocket: 185b5069aa1808a91f75ffa283eb9d4e16e79e26
 
-PODFILE CHECKSUM: d60cbd84dfa9ffeb717903afbfa7dcb477a46945
+PODFILE CHECKSUM: 18396dd38101d4e635210d53ad18fe7eb5442cf0
 
 COCOAPODS: 1.2.0
